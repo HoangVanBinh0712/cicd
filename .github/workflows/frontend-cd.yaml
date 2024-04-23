@@ -1,0 +1,111 @@
+# Workflow name
+name: Frontend Continuous Deployment
+
+# Triggers for the workflow
+on:
+  # Manual trigger using the workflow_dispatch event
+  workflow_dispatch:
+
+  pull_request:
+    types: [ closed ]
+    branches:
+      - main
+    paths:
+      - 'cicd-frontend/**'
+      - '.github/workflows/frontend**'
+
+## Jobs defined in the workflow
+jobs:
+  lint:
+    if: github.event.pull_request.merged == true
+    name: Lint Job
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: latest
+
+      - name: Cache dependencies
+        uses: actions/cache@v2
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-npm-
+
+      - name: Install dependencies
+        run: npm install
+        working-directory: cicd-frontend/frontend
+
+      - name: Run linting
+        run: npm run lint
+        working-directory: cicd-frontend/frontend
+  test:
+    if: github.event.pull_request.merged == true
+    name: Test Job
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: latest
+
+      - name: Cache dependencies
+        uses: actions/cache@v2
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
+
+      - name: Install dependencies
+        run: npm install
+        working-directory: cicd-frontend/frontend
+
+      - name: Run tests
+        run: npm run test
+        working-directory: cicd-frontend/frontend
+
+  build-actions:
+    if: github.event.pull_request.merged == true
+    needs: [ lint, test ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          mask-password: 'false'
+
+      - name: Build application using Docker and push to ECR
+        run: |
+          docker build --build-arg=REACT_APP_MOVIE_API_URL=${{ secrets.REACT_APP_MOVIE_API_URL }} -t ${{ secrets.AWS_REGISTRY_URL_FE }}/frontend:latest .
+          docker push ${{ secrets.AWS_REGISTRY_URL_FE }}/frontend:latest
+        working-directory: cicd-frontend/frontend
+
+      - name: Update kubeconfig for EKS cluster
+        run: |
+          aws eks update-kubeconfig --name ${{ secrets.CLUSTER_NAME }} --region ${{ secrets.AWS_REGION }}
+
+      - name: Deploy to EKS
+        run: |
+          kubectl apply -k .
+        working-directory: cicd-frontend/frontend/k8s
