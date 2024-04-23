@@ -1,7 +1,7 @@
 name: Backend Continuous Integration
 
 on:
-  # Manual trigger using the workflow_dispatch event
+  # Manual trigger using the workflow_dispatch event.
   workflow_dispatch:
 
   pull_request:
